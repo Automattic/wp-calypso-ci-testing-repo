@@ -55,7 +55,6 @@ object MergeQueueRequiredCheck : BuildType({
                 #!/usr/bin/env bash
                 set -euo pipefail
 
-                branch="%teamcity.build.branch%"
                 base_branch="%mergeQueue.baseBranch%"
                 properties_file="%system.teamcity.configuration.properties.file%"
                 queue_prefix="gh-readonly-queue/${'$'}{base_branch}/"
@@ -84,45 +83,96 @@ object MergeQueueRequiredCheck : BuildType({
                     ' "${'$'}file"
                 }
 
+                get_pull_request_number() {
+                    read_teamcity_property "teamcity.pullRequest.number" "${'$'}properties_file" || true
+                }
+
                 is_merge_queue_branch() {
                     local candidate="${'$'}{1:-}"
                     [[ "${'$'}candidate" == "${'$'}queue_prefix"* || "${'$'}candidate" == "refs/heads/${'$'}queue_prefix"* ]]
                 }
 
-                if [[ "${'$'}branch" == "%teamcity.build.branch%" || -z "${'$'}branch" ]]; then
-                    branch="${'$'}{TEAMCITY_BUILD_BRANCH:-}"
-                fi
+                normalize_git_ref() {
+                    local ref="${'$'}1"
 
-                if ! is_merge_queue_branch "${'$'}branch" && command -v git >/dev/null && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                    ref="${'$'}{ref#refs/heads/}"
+                    ref="${'$'}{ref#refs/remotes/}"
+                    ref="${'$'}{ref#origin/}"
+
+                    printf '%s\n' "${'$'}ref"
+                }
+
+                get_teamcity_branch_name() {
+                    local configured_branch="%teamcity.build.branch%"
+
+                    if [[ "${'$'}configured_branch" == "%teamcity.build.branch%" || -z "${'$'}configured_branch" ]]; then
+                        configured_branch="${'$'}{TEAMCITY_BUILD_BRANCH:-}"
+                    fi
+
+                    printf '%s\n' "${'$'}configured_branch"
+                }
+
+                get_git_branch_name_at_head() {
+                    command -v git >/dev/null || return 1
+                    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+
+                    local fallback=""
+
                     while IFS= read -r ref; do
-                        normalized="${'$'}{ref#refs/heads/}"
-                        normalized="${'$'}{normalized#refs/remotes/}"
-                        normalized="${'$'}{normalized#origin/}"
+                        local normalized
+                        normalized="$(normalize_git_ref "${'$'}ref")"
 
                         if is_merge_queue_branch "${'$'}normalized"; then
-                            branch="${'$'}normalized"
-                            break
+                            printf '%s\n' "${'$'}normalized"
+                            return 0
                         fi
 
-                        if [[ -z "${'$'}branch" ]]; then
-                            branch="${'$'}normalized"
+                        if [[ -z "${'$'}fallback" ]]; then
+                            fallback="${'$'}normalized"
                         fi
                     done < <(git for-each-ref --format='%(refname)' --points-at HEAD refs/heads refs/remotes 2>/dev/null || true)
-                fi
 
-                pull_request_number="$(read_teamcity_property "teamcity.pullRequest.number" "${'$'}properties_file" || true)"
-                if [[ -n "${'$'}pull_request_number" ]]; then
-                    echo "Pull request #${'$'}pull_request_number; passing early."
-                    exit 0
-                fi
+                    [[ -n "${'$'}fallback" ]] || return 1
+                    printf '%s\n' "${'$'}fallback"
+                }
 
-                if ! is_merge_queue_branch "${'$'}branch" && [[ -n "${'$'}branch" ]]; then
-                    echo "Not a GitHub merge queue branch (${'$'}branch); passing early."
-                    exit 0
-                fi
+                get_branch_name() {
+                    local teamcity_branch
+                    teamcity_branch="$(get_teamcity_branch_name)"
+
+                    if is_merge_queue_branch "${'$'}teamcity_branch"; then
+                        printf '%s\n' "${'$'}teamcity_branch"
+                        return 0
+                    fi
+
+                    local git_branch
+                    git_branch="$(get_git_branch_name_at_head || true)"
+
+                    if is_merge_queue_branch "${'$'}git_branch"; then
+                        printf '%s\n' "${'$'}git_branch"
+                        return 0
+                    fi
+
+                    if [[ -n "${'$'}teamcity_branch" ]]; then
+                        printf '%s\n' "${'$'}teamcity_branch"
+                        return 0
+                    fi
+
+                    [[ -n "${'$'}git_branch" ]] || return 1
+                    printf '%s\n' "${'$'}git_branch"
+                }
+
+                branch="$(get_branch_name || true)"
+                pull_request_number="$(get_pull_request_number)"
 
                 if is_merge_queue_branch "${'$'}branch"; then
                     echo "GitHub merge queue branch detected (${'$'}branch); running required checks."
+                elif [[ -n "${'$'}pull_request_number" ]]; then
+                    echo "Pull request #${'$'}pull_request_number; passing early."
+                    exit 0
+                elif [[ -n "${'$'}branch" ]]; then
+                    echo "Not a GitHub merge queue branch (${'$'}branch); passing early."
+                    exit 0
                 else
                     echo "Could not determine whether this is a pull request or merge queue build; refusing to run checks ambiguously."
                     exit 1
