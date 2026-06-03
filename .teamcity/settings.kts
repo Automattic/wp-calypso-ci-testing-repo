@@ -56,19 +56,48 @@ object MergeQueueRequiredCheck : BuildType({
                 set -euo pipefail
 
                 branch="%teamcity.build.branch%"
+                pull_request_number="%teamcity.pullRequest.number%"
                 base_branch="%mergeQueue.baseBranch%"
                 queue_prefix="gh-readonly-queue/${'$'}{base_branch}/"
+
+                is_merge_queue_branch() {
+                    local candidate="${'$'}{1:-}"
+                    [[ "${'$'}candidate" == "${'$'}queue_prefix"* || "${'$'}candidate" == "refs/heads/${'$'}queue_prefix"* ]]
+                }
 
                 if [[ "${'$'}branch" == "%teamcity.build.branch%" || -z "${'$'}branch" ]]; then
                     branch="${'$'}{TEAMCITY_BUILD_BRANCH:-}"
                 fi
 
-                if [[ "${'$'}branch" != "${'$'}queue_prefix"* && "${'$'}branch" != "refs/heads/${'$'}queue_prefix"* ]]; then
-                    echo "Not a GitHub merge queue branch (${'$'}{branch:-unknown}); passing early."
+                if ! is_merge_queue_branch "${'$'}branch" && command -v git >/dev/null && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                    while IFS= read -r ref; do
+                        normalized="${'$'}{ref#refs/heads/}"
+                        normalized="${'$'}{normalized#refs/remotes/}"
+                        normalized="${'$'}{normalized#origin/}"
+
+                        if is_merge_queue_branch "${'$'}normalized"; then
+                            branch="${'$'}normalized"
+                            break
+                        fi
+                    done < <(git for-each-ref --format='%(refname)' --points-at HEAD refs/heads refs/remotes 2>/dev/null || true)
+                fi
+
+                if [[ "${'$'}pull_request_number" != "%teamcity.pullRequest.number%" && -n "${'$'}pull_request_number" ]]; then
+                    echo "Pull request #${'$'}pull_request_number; passing early."
                     exit 0
                 fi
 
-                echo "GitHub merge queue branch detected (${'$'}branch); running required checks."
+                if ! is_merge_queue_branch "${'$'}branch" && [[ -n "${'$'}branch" ]]; then
+                    echo "Not a GitHub merge queue branch (${'$'}branch); passing early."
+                    exit 0
+                fi
+
+                if is_merge_queue_branch "${'$'}branch"; then
+                    echo "GitHub merge queue branch detected (${'$'}branch); running required checks."
+                else
+                    echo "No PR metadata or branch name was exposed; running required checks to avoid passing a merge queue build early."
+                fi
+
                 test -f README.md
             """.trimIndent()
         }
