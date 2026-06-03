@@ -57,7 +57,32 @@ object MergeQueueRequiredCheck : BuildType({
 
                 branch="%teamcity.build.branch%"
                 base_branch="%mergeQueue.baseBranch%"
+                properties_file="%system.teamcity.configuration.properties.file%"
                 queue_prefix="gh-readonly-queue/${'$'}{base_branch}/"
+
+                # Optional PR parameters are read from the properties file to avoid
+                # undefined-parameter warnings on merge queue builds.
+                read_teamcity_property() {
+                    local key="${'$'}1"
+                    local file="${'$'}2"
+
+                    [[ -f "${'$'}file" ]] || return 1
+
+                    awk -v key="${'$'}key" '
+                        BEGIN { equals = key "="; colon = key ":"; found = 0 }
+                        index(${'$'}0, equals) == 1 {
+                            print substr(${'$'}0, length(equals) + 1)
+                            found = 1
+                            exit
+                        }
+                        index(${'$'}0, colon) == 1 {
+                            print substr(${'$'}0, length(colon) + 1)
+                            found = 1
+                            exit
+                        }
+                        END { if (!found) exit 1 }
+                    ' "${'$'}file"
+                }
 
                 is_merge_queue_branch() {
                     local candidate="${'$'}{1:-}"
@@ -85,6 +110,12 @@ object MergeQueueRequiredCheck : BuildType({
                     done < <(git for-each-ref --format='%(refname)' --points-at HEAD refs/heads refs/remotes 2>/dev/null || true)
                 fi
 
+                pull_request_number="$(read_teamcity_property "teamcity.pullRequest.number" "${'$'}properties_file" || true)"
+                if [[ -n "${'$'}pull_request_number" ]]; then
+                    echo "Pull request #${'$'}pull_request_number; passing early."
+                    exit 0
+                fi
+
                 if ! is_merge_queue_branch "${'$'}branch" && [[ -n "${'$'}branch" ]]; then
                     echo "Not a GitHub merge queue branch (${'$'}branch); passing early."
                     exit 0
@@ -93,7 +124,8 @@ object MergeQueueRequiredCheck : BuildType({
                 if is_merge_queue_branch "${'$'}branch"; then
                     echo "GitHub merge queue branch detected (${'$'}branch); running required checks."
                 else
-                    echo "No PR metadata or branch name was exposed; running required checks to avoid passing a merge queue build early."
+                    echo "Could not determine whether this is a pull request or merge queue build; refusing to run checks ambiguously."
+                    exit 1
                 fi
 
                 grep -qw "pass" README.md
