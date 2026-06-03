@@ -78,6 +78,10 @@ object MergeQueueRequiredCheck : BuildType({
                             branch="${'$'}normalized"
                             break
                         fi
+
+                        if [[ -z "${'$'}branch" ]]; then
+                            branch="${'$'}normalized"
+                        fi
                     done < <(git for-each-ref --format='%(refname)' --points-at HEAD refs/heads refs/remotes 2>/dev/null || true)
                 fi
 
