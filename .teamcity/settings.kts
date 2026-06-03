@@ -1,4 +1,9 @@
 import jetbrains.buildServer.configs.kotlin.*
+import jetbrains.buildServer.configs.kotlin.buildFeatures.PullRequests
+import jetbrains.buildServer.configs.kotlin.buildFeatures.commitStatusPublisher
+import jetbrains.buildServer.configs.kotlin.buildFeatures.pullRequests
+import jetbrains.buildServer.configs.kotlin.steps.script
+import jetbrains.buildServer.configs.kotlin.triggers.vcs
 
 /*
 The settings script is an entry point for defining a TeamCity
@@ -25,4 +30,76 @@ To debug in IntelliJ Idea, open the 'Maven Projects' tool window (View
 version = "2025.11"
 
 project {
+    buildType(MergeQueueRequiredCheck)
 }
+
+object MergeQueueRequiredCheck : BuildType({
+    id("MergeQueueRequiredCheck")
+    name = "Merge Queue Required Check"
+    description = "Required GitHub check that passes quickly on PRs and runs validation on merge queue branches."
+
+    params {
+        param("mergeQueue.baseBranch", "trunk")
+    }
+
+    vcs {
+        // The settings VCS root must monitor refs/heads/gh-readonly-queue/trunk/*
+        // for GitHub merge queue branches to become visible to this build.
+        root(DslContext.settingsRoot)
+    }
+
+    steps {
+        script {
+            name = "Gate merge queue checks"
+            scriptContent = """
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                branch="%teamcity.build.branch%"
+                base_branch="%mergeQueue.baseBranch%"
+                queue_prefix="gh-readonly-queue/${'$'}{base_branch}/"
+
+                if [[ "${'$'}branch" == "%teamcity.build.branch%" || -z "${'$'}branch" ]]; then
+                    branch="${'$'}{TEAMCITY_BUILD_BRANCH:-}"
+                fi
+
+                if [[ "${'$'}branch" != "${'$'}queue_prefix"* && "${'$'}branch" != "refs/heads/${'$'}queue_prefix"* ]]; then
+                    echo "Not a GitHub merge queue branch (${'$'}{branch:-unknown}); passing early."
+                    exit 0
+                fi
+
+                echo "GitHub merge queue branch detected (${'$'}branch); running required checks."
+                test -f README.md
+            """.trimIndent()
+        }
+    }
+
+    triggers {
+        vcs {
+            branchFilter = """
+                -:*
+                +:gh-readonly-queue/%mergeQueue.baseBranch%/*
+                +:refs/heads/gh-readonly-queue/%mergeQueue.baseBranch%/*
+                +pr:target=%mergeQueue.baseBranch%
+            """.trimIndent()
+        }
+    }
+
+    features {
+        pullRequests {
+            provider = github {
+                authType = vcsRoot()
+                filterTargetBranch = "refs/heads/%mergeQueue.baseBranch%"
+                filterAuthorRole = PullRequests.GitHubRoleFilter.EVERYBODY
+            }
+        }
+
+        commitStatusPublisher {
+            publisher = github {
+                githubUrl = "https://api.github.com"
+                statusCheckName = "Merge Queue Required Check"
+                authType = vcsRoot()
+            }
+        }
+    }
+})
