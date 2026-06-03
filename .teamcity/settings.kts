@@ -56,7 +56,6 @@ object MergeQueueRequiredCheck : BuildType({
                 set -euo pipefail
 
                 branch="%teamcity.build.branch%"
-                pull_request_number="%teamcity.pullRequest.number%"
                 base_branch="%mergeQueue.baseBranch%"
                 queue_prefix="gh-readonly-queue/${'$'}{base_branch}/"
 
@@ -82,11 +81,6 @@ object MergeQueueRequiredCheck : BuildType({
                     done < <(git for-each-ref --format='%(refname)' --points-at HEAD refs/heads refs/remotes 2>/dev/null || true)
                 fi
 
-                if [[ "${'$'}pull_request_number" != "%teamcity.pullRequest.number%" && -n "${'$'}pull_request_number" ]]; then
-                    echo "Pull request #${'$'}pull_request_number; passing early."
-                    exit 0
-                fi
-
                 if ! is_merge_queue_branch "${'$'}branch" && [[ -n "${'$'}branch" ]]; then
                     echo "Not a GitHub merge queue branch (${'$'}branch); passing early."
                     exit 0
@@ -98,7 +92,7 @@ object MergeQueueRequiredCheck : BuildType({
                     echo "No PR metadata or branch name was exposed; running required checks to avoid passing a merge queue build early."
                 fi
 
-                test -f README.md
+                grep -qw "pass" README.md
             """.trimIndent()
         }
     }
