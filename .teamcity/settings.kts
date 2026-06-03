@@ -43,8 +43,8 @@ object MergeQueueRequiredCheck : BuildType({
     }
 
     vcs {
-        // The settings VCS root must monitor refs/heads/gh-readonly-queue/trunk/*
-        // for GitHub merge queue branches to become visible to this build.
+        // The settings VCS root branch specification must include:
+        // +:refs/heads/(gh-readonly-queue/trunk/*)
         root(DslContext.settingsRoot)
     }
 
