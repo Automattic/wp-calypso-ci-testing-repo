@@ -2,7 +2,7 @@ import jetbrains.buildServer.configs.kotlin.*
 import jetbrains.buildServer.configs.kotlin.buildFeatures.PullRequests
 import jetbrains.buildServer.configs.kotlin.buildFeatures.commitStatusPublisher
 import jetbrains.buildServer.configs.kotlin.buildFeatures.pullRequests
-import jetbrains.buildServer.configs.kotlin.steps.script
+import jetbrains.buildServer.configs.kotlin.buildSteps.script
 import jetbrains.buildServer.configs.kotlin.triggers.vcs
 
 /*
@@ -97,7 +97,6 @@ object MergeQueueRequiredCheck : BuildType({
         commitStatusPublisher {
             publisher = github {
                 githubUrl = "https://api.github.com"
-                statusCheckName = "Merge Queue Required Check"
                 authType = vcsRoot()
             }
         }
